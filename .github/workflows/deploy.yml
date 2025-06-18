@@ -63,10 +63,11 @@ jobs:
           echo "Rolling back deployment..."
           LATEST_BACKUP=$(ls -dt /var/www/html_backup_* | head -n 1)
           if [ -d "$LATEST_BACKUP" ]; then
-            rm -rf /var/www/html
-            cp -r "$LATEST_BACKUP" /var/www/html
+            sudo rm -rf /var/www/html
+            sudo cp -r "$LATEST_BACKUP" /var/www/html
             echo "Rollback completed successfully."
           else
             echo "No backup found. Rollback failed."
             exit 1
           fi
+
