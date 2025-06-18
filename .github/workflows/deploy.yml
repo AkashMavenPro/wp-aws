@@ -22,7 +22,10 @@ jobs:
       - name: 🛠️ Build the app
         run: npm run build
 
-      - name: 🚀 Deploy and Handle Rollback via SSH
+      - name: 📅 Set Deployment Timestamp
+        run: echo "DEPLOY_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_ENV
+
+      - name: 🚀 Prepare EC2 for Deployment
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -32,15 +35,10 @@ jobs:
           script: |
             APP_DIR="/var/www/html/react-frontend"
             BACKUP_DIR="/var/www/html/react-frontend-backup"
-            TEMP_DIR="/tmp/react-deploy-$$"
-            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            TEMP_DIR="/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
 
             echo "🔧 Creating temp dir for new build..."
             sudo mkdir -p $TEMP_DIR
-
-            echo "⬆️ Uploading new build to temp dir..."
-            sudo rm -rf $TEMP_DIR/*
-            # We'll copy build files from local to this temp via scp next step
 
             echo "📦 Backing up current app..."
             if [ -d "$APP_DIR" ]; then
@@ -56,7 +54,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           source: "build/*"
-          target: "/tmp/react-deploy-$$"
+          target: "/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
           strip_components: 1
 
       - name: 🚀 Finalize Deployment & Validate
@@ -67,7 +65,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            TEMP_DIR="/tmp/react-deploy-$$"
+            TEMP_DIR="/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
             APP_DIR="/var/www/html/react-frontend"
             BACKUP_DIR="/var/www/html/react-frontend-backup"
 
