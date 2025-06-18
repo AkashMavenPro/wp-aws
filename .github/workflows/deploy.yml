@@ -1,36 +1,72 @@
-name: 🚀 Deploy React App to EC2
+name: 🚀 Manual Frontend Deployment
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-      - name: 🛠️ Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
 
-      - name: 📦 Install dependencies
-        run: npm install
+    - name: Install dependencies
+      run: npm install
 
-      - name: 🛠️ Build the app
-        run: npm run build
+    - name: Build project
+      run: npm run build
 
-      - name: 🚀 Deploy to EC2 via SSH
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          source: "build/*"
-          target: "/var/www/html/react-frontend"
-          strip_components: 1
+    - name: Backup current build on server
+      uses: appleboy/ssh-action@v0.1.7
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          cp -r /var/www/html /var/www/html_backup_$TIMESTAMP
+
+    - name: Deploy build to server
+      id: deploy
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "build/*"
+        target: "/var/www/html"
+        strip_components: 1
+
+    - name: Validate deployment (basic check)
+      uses: appleboy/ssh-action@v0.1.7
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          curl --fail http://13.48.221.188 || exit 1
+
+    - name: Rollback on failure
+      if: failure()
+      uses: appleboy/ssh-action@v0.1.7
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          echo "Rolling back deployment..."
+          LATEST_BACKUP=$(ls -dt /var/www/html_backup_* | head -n 1)
+          if [ -d "$LATEST_BACKUP" ]; then
+            rm -rf /var/www/html
+            cp -r "$LATEST_BACKUP" /var/www/html
+            echo "Rollback completed successfully."
+          else
+            echo "No backup found. Rollback failed."
+            exit 1
+          fi
