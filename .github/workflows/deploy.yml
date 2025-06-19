@@ -1,53 +1,63 @@
-name: 🚀 Manual Frontend Deployment to EC2 (with Rollback)
+name: 🚀 Deploy Frontend to EC2 (Manual + Rollback)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Trigger manually from GitHub Actions tab
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout code
+      # Step 1: Checkout Code
+      - name: ✅ Checkout code
         uses: actions/checkout@v3
 
+      # Step 2: Set up Node.js
       - name: 🛠️ Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '20'
 
+      # Step 3: Install Dependencies
       - name: 📦 Install dependencies
         run: npm install
 
-      - name: 🛠️ Build the app
+      # Step 4: Build React App
+      - name: 🧱 Build the app
         run: npm run build
 
-      - name: 🕒 Set deployment timestamp
+      # Step 5: Generate deployment timestamp
+      - name: 📅 Generate deployment timestamp
         run: echo "DEPLOY_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_ENV
 
-      - name: 🧰 Prepare deployment on EC2
+      # Step 6: Prepare Server (create temp & backup directories)
+      - name: ⚙️ Prepare server for deployment
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
           script: |
             APP_DIR="/var/www/html/react-frontend"
             BACKUP_DIR="/var/www/html/react-frontend-backup"
             TEMP_DIR="/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
 
-            echo "📁 Creating temp dir..."
+            echo "------------------------------------"
+            echo "| Creating temporary directory...  |"
+            echo "------------------------------------"
             mkdir -p $TEMP_DIR
             chown -R $USER:$USER $TEMP_DIR
 
-            echo "📦 Backing up current app..."
+            echo "------------------------------------"
+            echo "| Backing up current version...    |"
+            echo "------------------------------------"
             if [ -d "$APP_DIR" ]; then
               sudo rm -rf $BACKUP_DIR
               sudo cp -r $APP_DIR $BACKUP_DIR
             fi
 
-      - name: 📤 Upload build to EC2
+      # Step 7: Upload Build to Server
+      - name: 📤 Upload build files to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -58,30 +68,34 @@ jobs:
           target: "/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
           strip_components: 1
 
+      # Step 8: Finalize Deployment + Rollback on Failure
       - name: 🚀 Finalize deployment and validate
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
           script: |
-            TEMP_DIR="/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
             APP_DIR="/var/www/html/react-frontend"
             BACKUP_DIR="/var/www/html/react-frontend-backup"
+            TEMP_DIR="/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
 
-            echo "🔁 Replacing app..."
+            echo "------------------------------------"
+            echo "| Replacing app with new version   |"
+            echo "------------------------------------"
             sudo rm -rf $APP_DIR
             sudo cp -r $TEMP_DIR $APP_DIR
 
-            echo "🧪 Checking site health..."
+            echo "------------------------------------"
+            echo "| Verifying deployment...          |"
+            echo "------------------------------------"
             if curl --fail http://localhost:80 > /dev/null; then
-              echo "✅ Success!"
+              echo "✅ Deployment successful."
               rm -rf $TEMP_DIR
             else
-              echo "❌ Failed. Rolling back..."
+              echo "❌ Deployment failed. Rolling back..."
               sudo rm -rf $APP_DIR
               sudo cp -r $BACKUP_DIR $APP_DIR
-              echo "✅ Rolled back."
+              echo "✅ Rollback complete."
               exit 1
             fi
