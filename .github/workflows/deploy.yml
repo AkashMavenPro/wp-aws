@@ -1,101 +1,71 @@
-name: 🚀 Deploy Frontend to EC2 (Manual + Rollback)
+name: 🚀 Auto Deploy Frontend to EC2 (with Rollback)
 
 on:
-  workflow_dispatch:  # Trigger manually from GitHub Actions tab
+  push:
+    branches:
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout Code
       - name: ✅ Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
 
-      # Step 2: Set up Node.js
-      - name: 🛠️ Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-
-      # Step 3: Install Dependencies
-      - name: 📦 Install dependencies
-        run: npm install
-
-      # Step 4: Build React App
-      - name: 🧱 Build the app
-        run: npm run build
-
-      # Step 5: Generate deployment timestamp
-      - name: 📅 Generate deployment timestamp
-        run: echo "DEPLOY_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_ENV
-
-      # Step 6: Prepare Server (create temp & backup directories)
-      - name: ⚙️ Prepare server for deployment
-        uses: appleboy/ssh-action@v0.1.7
+      - name: 🚀 Deploy code to EC2 via SSH
+        uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            APP_DIR="/var/www/html/react-frontend"
-            BACKUP_DIR="/var/www/html/react-frontend-backup"
-            TEMP_DIR="/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
+            # Set up environment
+            export NVM_DIR=~/.nvm
+            source ~/.nvm/nvm.sh
 
-            echo "------------------------------------"
-            echo "| Creating temporary directory...  |"
-            echo "------------------------------------"
-            mkdir -p $TEMP_DIR
-            chown -R $USER:$USER $TEMP_DIR
+            # Define directories
+            BASE_DIR="/var/www/html"
+            APP_DIR="$BASE_DIR/react-frontend"
+            BACKUP_DIR="$BASE_DIR/react-frontend-backup"
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-            echo "------------------------------------"
-            echo "| Backing up current version...    |"
-            echo "------------------------------------"
+            echo "----------------------------------------"
+            echo "|   Creating Backup of Current Build   |"
+            echo "----------------------------------------"
             if [ -d "$APP_DIR" ]; then
               sudo rm -rf $BACKUP_DIR
               sudo cp -r $APP_DIR $BACKUP_DIR
             fi
 
-      # Step 7: Upload Build to Server
-      - name: 📤 Upload build files to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          source: "build/*"
-          target: "/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
-          strip_components: 1
+            echo "----------------------------------------"
+            echo "|       Pulling Latest Code            |"
+            echo "----------------------------------------"
+            if cd $APP_DIR && \
+               git reset --hard && \
+               git pull origin main && \
+               npm install && \
+               npm run build; then
 
-      # Step 8: Finalize Deployment + Rollback on Failure
-      - name: 🚀 Finalize deployment and validate
-        uses: appleboy/ssh-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            APP_DIR="/var/www/html/react-frontend"
-            BACKUP_DIR="/var/www/html/react-frontend-backup"
-            TEMP_DIR="/tmp/react-deploy-${{ env.DEPLOY_TIMESTAMP }}"
+              echo "----------------------------------------"
+              echo "|     Deployment Successful ✅         |"
+              echo "----------------------------------------"
 
-            echo "------------------------------------"
-            echo "| Replacing app with new version   |"
-            echo "------------------------------------"
-            sudo rm -rf $APP_DIR
-            sudo cp -r $TEMP_DIR $APP_DIR
+              # Optionally clean up backup after successful deploy
+              sudo rm -rf $BACKUP_DIR
 
-            echo "------------------------------------"
-            echo "| Verifying deployment...          |"
-            echo "------------------------------------"
-            if curl --fail http://localhost:80 > /dev/null; then
-              echo "✅ Deployment successful."
-              rm -rf $TEMP_DIR
             else
-              echo "❌ Deployment failed. Rolling back..."
+              echo "----------------------------------------"
+              echo "|     Deployment Failed ❌             |"
+              echo "|         Rolling Back...             |"
+              echo "----------------------------------------"
+
               sudo rm -rf $APP_DIR
               sudo cp -r $BACKUP_DIR $APP_DIR
-              echo "✅ Rollback complete."
+
+              echo "✅ Rollback completed."
+
               exit 1
             fi
+
+          options: "-o StrictHostKeyChecking=no"
